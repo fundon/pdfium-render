@@ -34,7 +34,7 @@ use crate::utils::files::{
     read_block_from_callback, write_block_from_callback, FpdfFileAccessExt, FpdfFileWriteExt,
 };
 use crate::utils::mem::create_byte_buffer;
-use js_sys::{Array, Function, Object, Reflect, Uint8Array, WebAssembly};
+use js_sys::{Array, Boolean, Function, Object, Reflect, Uint8Array, WebAssembly};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::convert::TryInto;
@@ -74,6 +74,7 @@ pub(crate) struct PdfiumRenderWasmState {
     free_js_fn: Option<Function>,
     call_js_fn: Option<Function>,
     debug: bool,
+    inited: bool,
     file_access_callback_function_table_entry: usize,
     file_write_callback_function_table_entry: usize,
     state: HashMap<String, JsValue>,
@@ -116,9 +117,14 @@ impl PdfiumRenderWasmState {
         }
     }
 
+    pub fn inited(&self) -> bool {
+        self.inited
+    }
+
     /// Returns `true` if this [PdfiumRenderWasmState] has been successfully bound to a valid
     /// external Pdfium WASM module.
     pub fn is_ready(&self) -> bool {
+        log::info!("inited {}", self.inited);
         self.pdfium_wasm_module.is_some()
     }
 
@@ -129,10 +135,17 @@ impl PdfiumRenderWasmState {
         pdfium_wasm_module: Object,
         local_wasm_module: Object,
         debug: bool,
+        inited: bool,
     ) -> Result<(), &str> {
+        if self.inited {
+            return Ok(());
+        }
+
         self.pdfium_wasm_module = Some(pdfium_wasm_module);
         self.local_wasm_module = Some(local_wasm_module);
         self.debug = debug;
+        self.inited = inited;
+        log::info!("1 {}", inited);
 
         self.malloc_js_fn = Some(Function::from(
             self.get_value_from_pdfium_wasm_module("_malloc")
@@ -999,6 +1012,7 @@ impl Default for PdfiumRenderWasmState {
             free_js_fn: None,
             call_js_fn: None,
             debug: false,
+            inited: false,
             file_access_callback_function_table_entry: 0, // These sentinel values will be replaced with actual values...
             file_write_callback_function_table_entry: 0, // ... during the first call to PdfiumRenderWasmState::bind_to_pdfium().
             state: HashMap::new(),
@@ -1020,6 +1034,7 @@ pub fn initialize_pdfium_render(
     pdfium_wasm_module: JsValue,
     local_wasm_module: JsValue,
     debug: bool,
+    inited: bool,
 ) -> bool {
     if console_log::init_with_level(if debug {
         log::Level::Trace
@@ -1032,6 +1047,7 @@ pub fn initialize_pdfium_render(
             "pdfium-render::initialize_pdfium_render(): Error initializing console-based logging"
         );
     }
+    log::info!("0 {}", inited);
 
     if debug {
         // Output full Rust stack traces to Javascript console.
@@ -1044,6 +1060,7 @@ pub fn initialize_pdfium_render(
             Object::from(pdfium_wasm_module),
             Object::from(local_wasm_module),
             debug,
+            inited,
         ) {
             Ok(()) => true,
             Err(msg) => {
@@ -1168,7 +1185,9 @@ pub fn write_block_from_callback_wasm(
     }
 }
 
-pub(crate) struct WasmPdfiumBindings {}
+pub(crate) struct WasmPdfiumBindings {
+    inited: bool,
+}
 
 impl WasmPdfiumBindings {
     // Pdfium cannot access a pointer location in our own WASM heap. When calling FPDF_* functions
@@ -1179,8 +1198,8 @@ impl WasmPdfiumBindings {
     // the function implementations in this module.
 
     #[inline]
-    pub(crate) fn new() -> Self {
-        WasmPdfiumBindings {}
+    pub(crate) fn new(inited: bool) -> Self {
+        WasmPdfiumBindings { inited }
     }
 
     /// Converts a pointer to an `FPDF_DOCUMENT` struct to a [JsValue].
@@ -1549,13 +1568,17 @@ impl WasmPdfiumBindings {
 impl Default for WasmPdfiumBindings {
     #[inline]
     fn default() -> Self {
-        WasmPdfiumBindings::new()
+        WasmPdfiumBindings::new(false)
     }
 }
 
 impl PdfiumLibraryBindings for WasmPdfiumBindings {
     #[allow(non_snake_case)]
     fn FPDF_InitLibraryWithConfig(&self, config: *const FPDF_LIBRARY_CONFIG) {
+        if self.inited {
+            return;
+        }
+
         log::debug!("pdfium-render::PdfiumLibraryBindings::FPDF_InitLibraryWithConfig()");
 
         let state = PdfiumRenderWasmState::lock();
@@ -1577,6 +1600,10 @@ impl PdfiumLibraryBindings for WasmPdfiumBindings {
 
     #[allow(non_snake_case)]
     fn FPDF_InitLibrary(&self) {
+        if self.inited {
+            return;
+        }
+
         log::debug!("pdfium-render::PdfiumLibraryBindings::FPDF_InitLibrary()");
 
         // Different Pdfium WASM builds have different ways of initializing the library.

@@ -173,10 +173,7 @@ pub struct PdfDocument<'a> {
 
 impl<'a> PdfDocument<'a> {
     #[inline]
-    pub(crate) fn from_pdfium(
-        handle: FPDF_DOCUMENT,
-        bindings: &'a dyn PdfiumLibraryBindings,
-    ) -> Self {
+    pub fn from_pdfium(handle: FPDF_DOCUMENT, bindings: &'a dyn PdfiumLibraryBindings) -> Self {
         let form = PdfForm::from_pdfium(handle, bindings);
 
         let pages =
@@ -201,7 +198,7 @@ impl<'a> PdfDocument<'a> {
 
     /// Returns the internal `FPDF_DOCUMENT` handle for this [PdfDocument].
     #[inline]
-    pub(crate) fn handle(&self) -> FPDF_DOCUMENT {
+    pub fn handle(&self) -> FPDF_DOCUMENT {
         self.handle
     }
 
@@ -402,8 +399,9 @@ impl<'a> Drop for PdfDocument<'a> {
         // This ensures that FPDFDOC_ExitFormFillEnvironment() is called _before_ FPDF_CloseDocument(),
         // avoiding a segmentation fault when using Pdfium builds compiled with V8/XFA support.
 
-        self.form = None;
-        self.bindings.FPDF_CloseDocument(self.handle);
+        // !!! We need manual control
+        // self.form = None;
+        // self.bindings.FPDF_CloseDocument(self.handle);
     }
 }
 

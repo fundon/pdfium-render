@@ -95,8 +95,9 @@ impl Pdfium {
     #[cfg(target_arch = "wasm32")]
     #[inline]
     pub fn bind_to_system_library() -> Result<Box<dyn PdfiumLibraryBindings>, PdfiumError> {
-        if PdfiumRenderWasmState::lock().is_ready() {
-            let bindings = WasmPdfiumBindings::new();
+        let state = PdfiumRenderWasmState::lock();
+        if state.is_ready() {
+            let bindings = WasmPdfiumBindings::new(state.inited());
 
             #[cfg(feature = "thread_safe")]
             let bindings = ThreadSafePdfiumBindings::new(bindings);
